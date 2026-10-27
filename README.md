@@ -1,6 +1,6 @@
 # monero-pool
 
-A Monero mining pool server written in C originally by jt-grassie. This is the tallhatdoug.com fork. 
+A Monero mining pool server written in C originally by jtgrassie. This is the tallhatdoug.com fork. 
 
 Design decisions are focused on performance and efficiency, hence the use of
 libevent and LMDB.  Currently it uses only *two* threads under normal operation
