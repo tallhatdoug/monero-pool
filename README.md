@@ -249,6 +249,8 @@ Doug Donation Address (also buy me a beer) :
 ```
 84NABbVn436bZS5ZVykmyxRFzVsYEfrbUTRawRT9mxNX8ne7CbfH7FMK5rWwP2jgks8wLPKT6xtSK5YspHqfosfZFJALuDB
 ```
+<img width="135" height="135" alt="image" src="https://github.com/user-attachments/assets/0cb95419-7d75-474c-bc56-890a9af5dec6" />
+
 
 would be very much appreciated.
 
