@@ -37,4 +37,11 @@ uint64_t account_balance(const char *address);
 uint64_t worker_count(const char *address);
 void worker_list(char *list_start, char *list_end, const char *address);
 
+
+void mined_blocks_cache_init(void); //block-height-stats-cache
+void mined_blocks_cache_add(uint64_t block_height);
+size_t mined_blocks_cache_get(uint64_t *output_blocks, size_t max_blocks);
+time_t mined_blocks_cache_get_last_update(void);
+void mined_blocks_cache_load_from_db(void);
+
 #endif

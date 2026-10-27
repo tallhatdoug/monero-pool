@@ -95,6 +95,29 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define MAX_HOST 256
 #define MAX_RIG_ID 32
 
+/* block cache code */
+#define MAX_MINED_BLOCKS 20
+
+typedef struct mined_blocks_cache_t {
+    uint64_t blocks[MAX_MINED_BLOCKS];
+    size_t count;
+    size_t head;  // Next position to write
+    time_t last_update;
+    pthread_mutex_t mutex;
+} mined_blocks_cache_t;
+
+// Global instance
+static mined_blocks_cache_t mined_blocks_cache = {
+    .blocks = {0},
+    .count = 0,
+    .head = 0,
+    .last_update = 0,
+    .mutex = PTHREAD_MUTEX_INITIALIZER
+};
+
+
+/*end block cache code */
+
 #define uint128_t unsigned __int128
 
 #ifndef MIN
@@ -645,6 +668,136 @@ database_close(void)
     mdb_dbi_close(env, db_properties);
     mdb_env_close(env);
 }
+/*////////////////////*/
+/* block cache code */
+/*////////////////////*/
+
+void
+mined_blocks_cache_init(void)
+{
+    pthread_mutex_lock(&mined_blocks_cache.mutex);
+    memset(mined_blocks_cache.blocks, 0, sizeof(mined_blocks_cache.blocks));
+    mined_blocks_cache.count = 0;
+    mined_blocks_cache.head = 0;
+    mined_blocks_cache.last_update = time(NULL);
+    pthread_mutex_unlock(&mined_blocks_cache.mutex);
+    log_info("Initialized mined blocks cache");
+}
+
+void
+mined_blocks_cache_add(uint64_t block_height)
+{
+    pthread_mutex_lock(&mined_blocks_cache.mutex);
+    
+    // Add block at head position
+    mined_blocks_cache.blocks[mined_blocks_cache.head] = block_height;
+    
+    // Update head (circular buffer)
+    mined_blocks_cache.head = (mined_blocks_cache.head + 1) % MAX_MINED_BLOCKS;
+    
+    // Update count (max 20)
+    if (mined_blocks_cache.count < MAX_MINED_BLOCKS)
+        mined_blocks_cache.count++;
+    
+    // Update timestamp
+    mined_blocks_cache.last_update = time(NULL);
+    
+    pthread_mutex_unlock(&mined_blocks_cache.mutex);
+    
+    log_info("Added block %"PRIu64" to mined blocks cache", block_height);
+}
+
+size_t
+mined_blocks_cache_get(uint64_t *output_blocks, size_t max_blocks)
+{
+    pthread_mutex_lock(&mined_blocks_cache.mutex);
+    
+    size_t blocks_to_copy = MIN(mined_blocks_cache.count, max_blocks);
+    
+    if (blocks_to_copy == 0) {
+        pthread_mutex_unlock(&mined_blocks_cache.mutex);
+        return 0;
+    }
+    
+    // Copy blocks in reverse order (newest first)
+    for (size_t i = 0; i < blocks_to_copy; i++)
+    {
+        // Calculate position: start from most recent and go backwards
+        size_t pos = (mined_blocks_cache.head - 1 - i + MAX_MINED_BLOCKS) % MAX_MINED_BLOCKS;
+        output_blocks[i] = mined_blocks_cache.blocks[pos];
+    }
+    
+    pthread_mutex_unlock(&mined_blocks_cache.mutex);
+    return blocks_to_copy;
+}
+
+time_t
+mined_blocks_cache_get_last_update(void)
+{
+    pthread_mutex_lock(&mined_blocks_cache.mutex);
+    time_t last_update = mined_blocks_cache.last_update;
+    pthread_mutex_unlock(&mined_blocks_cache.mutex);
+    return last_update;
+}
+
+void
+mined_blocks_cache_load_from_db(void)
+{
+    int rc = 0;
+    MDB_txn *txn = NULL;
+    MDB_cursor *cursor = NULL;
+    
+    log_info("Loading recent blocks into cache...");
+    
+    if ((rc = pdb_txn_begin(env, NULL, MDB_RDONLY, &txn)))
+    {
+        log_warn("Failed to load blocks into cache: %s", mdb_strerror(rc));
+        return;
+    }
+    
+    if ((rc = mdb_cursor_open(txn, db_blocks, &cursor)))
+    {
+        log_warn("Failed to open blocks cursor for cache: %s", mdb_strerror(rc));
+        mdb_txn_abort(txn);
+        return;
+    }
+    
+    // Load last 20 blocks in reverse order
+    uint64_t temp_blocks[MAX_MINED_BLOCKS];
+    size_t loaded = 0;
+    MDB_cursor_op op = MDB_LAST;
+    
+    while (loaded < MAX_MINED_BLOCKS)
+    {
+        MDB_val key, val;
+        if ((rc = mdb_cursor_get(cursor, &key, &val, op)))
+            break;
+        
+        op = MDB_PREV;
+        block_t *block = (block_t*)val.mv_data;
+        
+        if (!(block->status & BLOCK_ORPHANED))
+        {
+            temp_blocks[loaded] = block->height;
+            loaded++;
+        }
+    }
+    
+    // Add blocks to cache in chronological order (oldest first)
+    for (int i = loaded - 1; i >= 0; i--)
+    {
+        mined_blocks_cache_add(temp_blocks[i]);
+    }
+    
+    mdb_cursor_close(cursor);
+    mdb_txn_abort(txn);
+    
+    log_info("Loaded %zu blocks into cache", loaded);
+}
+
+/*////////////////////*/
+/*end block cache code*/
+/*////////////////////*/
 
 static int
 store_share(uint64_t height, share_t *share)
@@ -2132,6 +2285,7 @@ rpc_on_block_submitted(const char* data, rpc_callback_t *callback)
         pool_stats.last_block_found = b->timestamp;
         pool_stats.round_hashes = 0;
     }
+    mined_blocks_cache_add(b->height);/* block cache */
     log_info("Block submitted at height: %"PRIu64, b->height);
     if ((rc = store_block(b->height, b)))
         log_warn("Failed to store block: %s", mdb_strerror(rc));
@@ -4746,7 +4900,10 @@ int main(int argc, char **argv)
         log_fatal("Failed to initialize database. Return code: %d", err);
         goto cleanup;
     }
-
+	/*block cache*/
+    mined_blocks_cache_init();
+    mined_blocks_cache_load_from_db();
+	/*block cache*/
     bstack_new(&bst, BLOCK_TEMPLATES_MAX, sizeof(block_template_t),
             template_recycle);
     bstack_new(&bsh, BLOCK_HEADERS_MAX, sizeof(block_t), NULL);

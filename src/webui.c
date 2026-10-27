@@ -95,6 +95,7 @@ send_json_workers(struct evhttp_request *req, void *arg)
     evhttp_send_reply(req, HTTP_OK, "OK", buf);
 }
 
+/*block cache added*/
 static void
 send_json_stats(struct evhttp_request *req, void *arg)
 {
@@ -123,6 +124,11 @@ send_json_stats(struct evhttp_request *req, void *arg)
         mb = (double) balance / 1000000000000.0;
     }
 
+    // Get cached mined blocks (no database access!)
+    uint64_t mined_blocks[20] = {0};
+    size_t block_count = mined_blocks_cache_get(mined_blocks, 20);
+    time_t last_update = mined_blocks_cache_get_last_update();
+
     evbuffer_add_printf(buf, "{"
             "\"pool_hashrate\":%"PRIu64","
             "\"round_hashes\":%"PRIu64","
@@ -143,14 +149,28 @@ send_json_stats(struct evhttp_request *req, void *arg)
                     "%"PRIu64",%"PRIu64",%"PRIu64","
                     "%"PRIu64",%"PRIu64",%"PRIu64"],"
             "\"miner_balance\":%.8f,"
-            "\"worker_count\": %"PRIu64
-            "}", ph, rh, nh, nd, height, ltf, lbf, pbf,
+            "\"worker_count\": %"PRIu64","
+            "\"mined_block_info\":{"
+                "\"last_20_mined_blocks\":[", 
+            ph, rh, nh, nd, height, ltf, lbf, pbf,
             context->payment_threshold, context->pool_fee,
             context->pool_port, context->pool_ssl_port,
             ss, context->pool_stats->connected_accounts,
             (uint64_t)mh[0],
             (uint64_t)mh[0], (uint64_t)mh[1], (uint64_t)mh[2],
             (uint64_t)mh[3], (uint64_t)mh[4], (uint64_t)mh[5], mb, wc);
+    
+    // Add the block numbers array
+    for (size_t i = 0; i < block_count; i++)
+    {
+        if (i > 0)
+            evbuffer_add_printf(buf, ",");
+        evbuffer_add_printf(buf, "%"PRIu64, mined_blocks[i]);
+    }
+    
+    // Close the mined_block_info and main JSON
+    evbuffer_add_printf(buf, "],\"last_update\":%ld}}", (long)last_update);
+    
     hdrs_out = evhttp_request_get_output_headers(req);
     evhttp_add_header(hdrs_out, "Content-Type", "application/json");
     evhttp_send_reply(req, HTTP_OK, "OK", buf);
