@@ -1,6 +1,6 @@
 # monero-pool
 
-A Monero mining pool server written in C.
+A Monero mining pool server written in C originally by jt-grassie. This is the tallhatdoug.com fork. 
 
 Design decisions are focused on performance and efficiency, hence the use of
 libevent and LMDB.  Currently it uses only *two* threads under normal operation
@@ -22,10 +22,10 @@ focussed on performance, efficiency and stability.
 
 The pool also supports an optional method of mining whereby miners select their
 *own* block template to mine on. Further information can be found in the
-document: [Stratum mode self-select](./sss.md).
+document: [Stratum mode self-select](./sss.md). IMPORTANT: DO NOT ENABLE THIS IN REPO'S CURRENT STATE 
 
 For testing, a reference mainnet pool can be found at
-[monerop.com](http://monerop.com).
+[monerop.com](http://monerop.com). - appears dead as of Oct 27 2026? [tallhatdoug.com](https://tallhatdoug.com) is live 
 
 ## Compiling from source
 
@@ -226,7 +226,7 @@ pool](https://monerop.com) makes use of HAProxy and port 4343 for SSL traffic.
 
 The web UI, as mentioned above, should ideally be placed behind a *caching
 proxy*. Therefore SSL termination should be be configured there (i.e. in
-Apache/Nginx).
+Apache/Nginx). Recommend filtering for monero addresses only on wa cookie (worker address) lookup on this same proxy.
 
 ## Help / Contact
 
@@ -239,11 +239,16 @@ and many of the other Monero channels.
 This mining pool has **no built-in developer donation** (like *other* mining
 pool software has), so if you use it and want to donate, XMR donations to:
 
+Original Repo Owner's XMR address (buy him a beer) : 
 ```
 451ytzQg1vUVkuAW73VsQ72G96FUjASi4WNQse3v8ALfjiR5vLzGQ2hMUdYhG38Fi15eJ5FJ1ZL4EV1SFVi228muGX4f3SV
 ```
-
 ![QR code](./qr-small.png)
+
+Doug Donation Address (also buy me a beer) : 
+```
+84NABbVn436bZS5ZVykmyxRFzVsYEfrbUTRawRT9mxNX8ne7CbfH7FMK5rWwP2jgks8wLPKT6xtSK5YspHqfosfZFJALuDB
+```
 
 would be very much appreciated.
 
