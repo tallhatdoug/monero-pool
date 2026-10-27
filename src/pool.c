@@ -2422,6 +2422,72 @@ cleanup:
 }
 
 static int
+build_payment_request(gbag_t *bag_pay, size_t proc, char **body_out)
+{
+    static const char prefix[] =
+        "{\"id\":\"0\",\"jsonrpc\":\"2.0\",\"method\":"
+        "\"transfer_split\",\"params\":{\"destinations\":[";
+    static const char entry_format[] =
+        "{\"address\":\"%s\",\"amount\":%" PRIu64 "}%s";
+
+    if (!body_out)
+        return -1;
+    *body_out = NULL;
+    if (!proc)
+        return -1;
+
+    /* First pass: compute the exact size, including the final NUL. */
+    size_t body_size = sizeof(prefix);
+    size_t remaining_entries = proc;
+    payment_t *p = (payment_t*) gbag_first(bag_pay);
+    while ((p = gbag_next(bag_pay, 0)))
+    {
+        const char *suffix = --remaining_entries ? "," : "]}}";
+        int written = snprintf(NULL, 0, entry_format,
+                p->address, p->amount, suffix);
+        if (written < 0 || (size_t)written > SIZE_MAX - body_size)
+            return -1;
+        body_size += (size_t)written;
+    }
+
+    char *body = malloc(body_size);
+    if (!body)
+        return -1;
+
+    /* Second pass: checked construction within the computed capacity. */
+    char *start = body;
+    size_t remaining = body_size;
+    int written = snprintf(start, remaining, "%s", prefix);
+    if (written < 0 || (size_t)written >= remaining)
+        goto fail;
+    start += written;
+    remaining -= written;
+
+    remaining_entries = proc;
+    p = (payment_t*) gbag_first(bag_pay);
+    while ((p = gbag_next(bag_pay, 0)))
+    {
+        const char *suffix = --remaining_entries ? "," : "]}}";
+        written = snprintf(start, remaining, entry_format,
+                p->address, p->amount, suffix);
+        if (written < 0 || (size_t)written >= remaining)
+            goto fail;
+        start += written;
+        remaining -= written;
+    }
+
+    if (remaining != 1 || *start != '\0')
+        goto fail;
+
+    *body_out = body;
+    return 0;
+
+fail:
+    free(body);
+    return -1;
+}
+
+static int
 send_payments(void)
 {
     if (*config.upstream_host || config.disable_payouts)
@@ -2475,29 +2541,28 @@ send_payments(void)
     size_t proc = gbag_used(bag_pay);
     if (proc)
     {
-        size_t body_size = 160 * proc + 128;
-        char body[body_size];
-        char *start = body;
-        char *end = body + body_size;
-        start = stecpy(start, "{\"id\":\"0\",\"jsonrpc\":\"2.0\",\"method\":"
-                "\"transfer_split\",\"params\":{\"destinations\":[", end);
-        payment_t *p = (payment_t*) gbag_first(bag_pay);
-        while ((p = gbag_next(bag_pay, 0)))
+        char *body = NULL;
+        if (build_payment_request(bag_pay, proc, &body))
         {
-            start = stecpy(start, "{\"address\":\"", end);
-            start = stecpy(start, p->address, end);
-            start = stecpy(start, "\",\"amount\":", end);
-            sprintf(start, "%"PRIu64"}", p->amount);
-            start = body + strlen(body);
-            if (--proc)
-                start = stecpy(start, ",", end);
-            else
-                start = stecpy(start, "]}}", end);
+            log_error("Failed to construct payment request");
+            gbag_free(bag_pay);
+            return -1;
         }
-        log_trace(body);
+
+        log_trace("%s", body);
         rpc_callback_t *cb = rpc_callback_new(
                 rpc_on_wallet_transferred, bag_pay, rpc_bag_free);
+        if (!cb)
+        {
+            log_error("Failed to allocate payment callback");
+            free(body);
+            gbag_free(bag_pay);
+            return -1;
+        }
+
+        /* rpc_wallet_request copies body before returning. */
         rpc_wallet_request(pool_base, body, cb);
+        free(body);
     }
     else
         gbag_free(bag_pay);
